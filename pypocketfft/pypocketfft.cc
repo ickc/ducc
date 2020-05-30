@@ -106,7 +106,7 @@ template<typename T> py::array c2c_internal(const py::array &in,
   {
   py::gil_scoped_release release;
   T fct = norm_fct<T>(inorm, ain.shape(), axes);
-  mr::c2c(ain, aout, axes, forward, fct, nthreads);
+  mr::c2cb(ain, aout, axes, forward, fct, nthreads);
   }
   return move(out);
   }

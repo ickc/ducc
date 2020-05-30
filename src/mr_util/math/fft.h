@@ -441,6 +441,7 @@ template<size_t N> class multi_iter
     size_t cshp_i, cshp_o, rem;
     ptrdiff_t cstr_i, cstr_o, sstr_i, sstr_o, p_ii, p_i[N], p_oi, p_o[N];
     bool uni_i, uni_o;
+    size_t nprep;
 
     void advance_i()
       {
@@ -459,7 +460,7 @@ template<size_t N> class multi_iter
   public:
     multi_iter(const fmav_info &iarr, const fmav_info &oarr, size_t idim,
       size_t nshares, size_t myshare)
-      : rem(iarr.size()/iarr.shape(idim)), sstr_i(0), sstr_o(0), p_ii(0), p_oi(0)
+      : rem(iarr.size()/iarr.shape(idim)), sstr_i(0), sstr_o(0), p_ii(0), p_oi(0), nprep(0)
       {
       MR_assert(oarr.ndim()==iarr.ndim(), "dimension mismatch");
       MR_assert(iarr.ndim()>=1, "not enough dimensions");
@@ -545,6 +546,7 @@ template<size_t N> class multi_iter
         uni_i = uni_i && (p_i[i]-p_i[i-1] == sstr_i);
         uni_o = uni_o && (p_o[i]-p_o[i-1] == sstr_o);
         }
+      nprep = n;
       rem -= n;
       }
     ptrdiff_t iofs(size_t i) const { return p_i[0] + ptrdiff_t(i)*cstr_i; }
@@ -562,6 +564,7 @@ template<size_t N> class multi_iter
     ptrdiff_t stride_in() const { return cstr_i; }
     ptrdiff_t stride_out() const { return cstr_o; }
     size_t remaining() const { return rem; }
+    size_t n_prepared() const { return nprep; }
   };
 
 class rev_iter
@@ -625,6 +628,39 @@ class rev_iter
     ptrdiff_t ofs() const { return p; }
     ptrdiff_t rev_ofs() const { return rp; }
     size_t remaining() const { return rem; }
+  };
+
+template <typename T> struct add_vec { using type = native_simd<T>; };
+template <typename T> struct add_vec<Cmplx<T>>
+  { using type = Cmplx<native_simd<T>>; };
+template <typename T> using add_vec_t = typename add_vec<T>::type;
+
+template<typename T> class xbuf
+  {
+  private:
+    size_t stride;
+    aligned_array<T> d;
+
+    static size_t fixLen(size_t len)
+      {
+      size_t linelen = len*sizeof(T);
+      if ((linelen>=4096) && ((linelen&(linelen-1))==0))
+        len+=1;
+      return len;
+      }
+
+  public:
+    xbuf(size_t bunchsize, size_t axsize)
+      : stride(fixLen(axsize)), d(stride*bunchsize) {}
+
+    T &operator()(size_t l, size_t i)
+      { return d[l*stride + i]; }
+    const T &operator()(size_t l, size_t i) const
+      { return d[l*stride + i]; }
+    T *ptr(size_t l)
+      { return &d[l*stride]; }
+    const T *ptr(size_t l) const
+      { return &d[l*stride]; }
   };
 
 template<typename T, typename T0> aligned_array<T> alloc_tmp
@@ -693,6 +729,141 @@ template <typename T, size_t vlen> void copy_input(const multi_iter<vlen> &it,
         }
       dst[i] = stmp;
       }
+  }
+
+template <typename T, size_t nbunch> MRUTIL_NOINLINE void copy_inputb(const multi_iter<nbunch> &it,
+  const fmav<Cmplx<T>> &src, xbuf<Cmplx<native_simd<T>>> &dst)
+  {
+  constexpr auto vlen = native_simd<T>::size();
+  auto nrow = it.n_prepared();
+  auto istr = it.stride_in();
+  if (it.uniform_i())
+    {
+    auto jstr = it.unistride_i();
+    auto ptr = &src[it.iofs_uni(0,0)];
+    if (jstr>istr)
+      {
+//      cerr <<"alt3" << endl;
+      for (size_t k=0; k<nrow/vlen; ++k)
+        for (size_t i=0; i<it.length_in(); ++i)
+          {
+          Cmplx<native_simd<T>> stmp;
+          for (size_t j=0; j<vlen; ++j)
+            {
+            auto tmp = ptr[ptrdiff_t(j+vlen*k)*jstr+ptrdiff_t(i)*istr];
+            stmp.r[j] = tmp.r;
+            stmp.i[j] = tmp.i;
+            }
+          dst(k,i) = stmp;
+          }
+      }
+    else
+      {
+//      cerr <<"alt4" << endl;
+      for (size_t i=0; i<it.length_in(); ++i)
+        for (size_t k=0; k<nrow/vlen; ++k)
+          {
+          Cmplx<native_simd<T>> stmp;
+          for (size_t j=0; j<vlen; ++j)
+            {
+            auto tmp = ptr[ptrdiff_t(j+vlen*k)*jstr+ptrdiff_t(i)*istr];
+            stmp.r[j] = tmp.r;
+            stmp.i[j] = tmp.i;
+            }
+          dst(k,i) = stmp;
+          }
+      }
+    }
+  else
+    {
+    auto jstr = (nrow<2) ? (istr+1) : (it.iofs(1,0)-it.iofs(0,0));
+    if (jstr>istr)
+      {
+//      cerr <<"alt1" << endl;
+      for (size_t k=0; k<nrow/vlen; ++k)
+        for (size_t i=0; i<it.length_in(); ++i)
+          {
+          Cmplx<native_simd<T>> stmp;
+          for (size_t j=0; j<vlen; ++j)
+            {
+            auto tmp = src[it.iofs(j+vlen*k,i)];
+            stmp.r[j] = tmp.r;
+            stmp.i[j] = tmp.i;
+            }
+          dst(k,i) = stmp;
+          }
+      }
+    else
+      {
+//      cerr <<"alt2" << endl;
+      for (size_t i=0; i<it.length_in(); ++i)
+        for (size_t k=0; k<nrow/vlen; ++k)
+          {
+          Cmplx<native_simd<T>> stmp;
+          for (size_t j=0; j<vlen; ++j)
+            {
+            auto tmp = src[it.iofs(j+vlen*k,i)];
+            stmp.r[j] = tmp.r;
+            stmp.i[j] = tmp.i;
+            }
+          dst(k,i) = stmp;
+          }
+      }
+    }
+  }
+template<typename T, size_t nbunch> MRUTIL_NOINLINE void copy_outputb(const multi_iter<nbunch> &it,
+  const xbuf<Cmplx<native_simd<T>>> &src, fmav<Cmplx<T>> &dst)
+  {
+  constexpr auto vlen = native_simd<T>::size();
+  auto nrow = it.n_prepared();
+  auto istr = it.stride_out();
+  auto jstr = (nrow<2) ? (istr+1) : (it.oofs(1,0)-it.oofs(0,0));
+  if (jstr>istr)
+    for (size_t k=0; k<nrow/vlen; ++k)
+      for (size_t i=0; i<it.length_out(); ++i)
+        {
+        Cmplx<native_simd<T>> stmp = src(k,i);
+        for (size_t j=0; j<vlen; ++j)
+          dst.vraw(it.oofs(k*vlen+j,i)).Set(stmp.r[j],stmp.i[j]);
+        }
+  else
+    for (size_t i=0; i<it.length_out(); ++i)
+      for (size_t k=0; k<nrow/vlen; ++k)
+        {
+        Cmplx<native_simd<T>> stmp = src(k,i);
+        for (size_t j=0; j<vlen; ++j)
+          dst.vraw(it.oofs(k*vlen+j,i)).Set(stmp.r[j],stmp.i[j]);
+        }
+  }
+template <typename T, size_t nbunch> MRUTIL_NOINLINE void copy_inputb(const multi_iter<nbunch> &it,
+  const fmav<Cmplx<T>> &src, xbuf<Cmplx<T>> &dst)
+  {
+  auto nrow = it.n_prepared();
+  auto istr = it.stride_in();
+  auto jstr = (nrow<2) ? (istr+1) : (it.iofs(1,0)-it.iofs(0,0));
+  if (jstr>istr)
+    for (size_t k=0; k<nrow; ++k)
+      for (size_t i=0; i<it.length_in(); ++i)
+        dst(k,i) = src[it.iofs(k,i)];
+  else
+    for (size_t i=0; i<it.length_in(); ++i)
+      for (size_t k=0; k<nrow; ++k)
+        dst(k,i) = src[it.iofs(k,i)];
+  }
+template<typename T, size_t nbunch> MRUTIL_NOINLINE void copy_outputb(const multi_iter<nbunch> &it,
+  const xbuf<Cmplx<T>> &src, fmav<Cmplx<T>> &dst)
+  {
+  auto nrow = it.n_prepared();
+  auto istr = it.stride_out();
+  auto jstr = (nrow<2) ? (istr+1) : (it.oofs(1,0)-it.oofs(0,0));
+  if (jstr>istr)
+    for (size_t k=0; k<nrow; ++k)
+      for (size_t i=0; i<it.length_out(); ++i)
+        dst.vraw(it.oofs(k,i)) = src(k,i);
+  else
+    for (size_t i=0; i<it.length_out(); ++i)
+      for (size_t k=0; k<nrow; ++k)
+        dst.vraw(it.oofs(k,i)) = src(k,i);
   }
 
 template <typename T, size_t vlen> void copy_input(const multi_iter<vlen> &it,
@@ -799,11 +970,6 @@ template<typename T, size_t vlen> void copy_output(const multi_iter<vlen> &it,
     ptr[it.oofs(i)] = src[i];
   }
 
-template <typename T> struct add_vec { using type = native_simd<T>; };
-template <typename T> struct add_vec<Cmplx<T>>
-  { using type = Cmplx<native_simd<T>>; };
-template <typename T> using add_vec_t = typename add_vec<T>::type;
-
 template<typename Tplan, typename T, typename T0, typename Exec>
 MRUTIL_NOINLINE void general_nd(const fmav<T> &in, fmav<T> &out,
   const shape_t &axes, T0 fct, size_t nthreads, const Exec & exec,
@@ -844,6 +1010,68 @@ MRUTIL_NOINLINE void general_nd(const fmav<T> &in, fmav<T> &out,
     fct = T0(1); // factor has been applied, use 1 for remaining axes
     }
   }
+
+constexpr size_t nbunch=4;
+
+template<typename Tplan, typename T, typename T0, typename Exec>
+MRUTIL_NOINLINE void general_ndb(const fmav<T> &in, fmav<T> &out,
+  const shape_t &axes, T0 fct, size_t nthreads, const Exec & exec,
+  const bool allow_inplace=true)
+  {
+  std::shared_ptr<Tplan> plan;
+
+  for (size_t iax=0; iax<axes.size(); ++iax)
+    {
+    size_t len=in.shape(axes[iax]);
+    if ((!plan) || (len!=plan->length()))
+      plan = get_plan<Tplan>(len);
+
+    execParallel(
+      util::thread_count(nthreads, in, axes[iax], native_simd<T0>::size()),
+      [&](Scheduler &sched) {
+        constexpr auto vlen = native_simd<T0>::size();
+        const auto &tin(iax==0? in : out);
+        multi_iter<nbunch> it(tin, out, axes[iax], sched.num_threads(), sched.thread_num());
+#ifndef MRUTIL_NO_SIMD
+        if ((vlen>1) && (it.remaining()>=vlen))
+          {
+          xbuf<add_vec_t<T>> storage(nbunch/vlen, len);
+          while (it.remaining()>=vlen)
+            {
+            size_t nadv = min(nbunch, it.remaining())/vlen;
+            it.advance(nadv*vlen);
+            exec(it, tin, out, storage, *plan, nadv, fct);
+            }
+          }
+#endif
+        if (it.remaining()>0)
+          {
+          xbuf<T> storage(1, len);
+          while (it.remaining()>0)
+            {
+            it.advance(1);
+            exec(it, tin, out, storage, *plan, 1, fct);
+            }
+          }
+      });  // end of parallel region
+    fct = T0(1); // factor has been applied, use 1 for remaining axes
+    }
+  }
+
+struct ExecC2Cb
+  {
+  bool forward;
+
+  template <typename T0, typename T, size_t nb> void operator() (
+    const multi_iter<nb> &it, const fmav<Cmplx<T0>> &in,
+    fmav<Cmplx<T0>> &out, xbuf<T> &buf, const pocketfft_c<T0> &plan, size_t nlines, T0 fct) const
+    {
+    copy_inputb(it, in, buf);
+    for (size_t i=0; i<nlines; ++i)
+      plan.exec(buf.ptr(i), fct, forward);
+    copy_outputb(it, buf, out);
+    }
+  };
 
 struct ExecC2C
   {
@@ -1080,6 +1308,17 @@ template<typename T> void c2c(const fmav<std::complex<T>> &in,
   general_nd<pocketfft_c<T>>(in2, out2, axes, fct, nthreads, ExecC2C{forward});
   }
 
+template<typename T> void c2cb(const fmav<std::complex<T>> &in,
+  fmav<std::complex<T>> &out, const shape_t &axes, bool forward,
+  T fct, size_t nthreads=1)
+  {
+  util::sanity_check_onetype(in, out, in.data()==out.data(), axes);
+  if (in.size()==0) return;
+  fmav<Cmplx<T>> in2(reinterpret_cast<const Cmplx<T> *>(in.data()), in);
+  fmav<Cmplx<T>> out2(reinterpret_cast<Cmplx<T> *>(out.vdata()), out, out.writable());
+  general_ndb<pocketfft_c<T>>(in2, out2, axes, fct, nthreads, ExecC2Cb{forward});
+  }
+
 template<typename T> void dct(const fmav<T> &in, fmav<T> &out,
   const shape_t &axes, int type, T fct, bool ortho, size_t nthreads=1)
   {
@@ -1202,6 +1441,7 @@ template<typename T> void r2r_genuine_hartley(const fmav<T> &in,
 using detail_fft::FORWARD;
 using detail_fft::BACKWARD;
 using detail_fft::c2c;
+using detail_fft::c2cb;
 using detail_fft::c2r;
 using detail_fft::r2c;
 using detail_fft::r2r_fftpack;
