@@ -203,7 +203,21 @@ py::array py_transpose(const py::array &in, py::array &out)
   MR_fail("unsupported datatype");
   }
 
-
+py::array twiddle(py::array &in, bool forward)
+  {
+  auto in2 = to_mav<complex<double>,2>(in, true);
+  size_t s1=in2.shape(0), s2 = in2.shape(1);
+  UnityRoots<double,complex<double>> roots(s1*s2);
+  if (forward)
+    for (size_t i=0; i<s1; ++i)
+      for (size_t j=0; j<s2; ++j)
+        in2.v(i,j) *= conj(roots[i*j]);
+  else
+    for (size_t i=0; i<s1; ++i)
+      for (size_t j=0; j<s2; ++j)
+        in2.v(i,j) *= roots[i*j];
+  return in;
+  }
 const char *misc_DS = R"""(
 Various unsorted utilities
 )""";
@@ -225,6 +239,7 @@ void add_misc(py::module &msup)
 
   m.def("ascontiguousarray",&py_ascontiguousarray, "in"_a);
   m.def("transpose",&py_transpose, "in"_a, "out"_a);
+  m.def("twiddle",&twiddle, "in"_a, "forward"_a);
   }
 
 }

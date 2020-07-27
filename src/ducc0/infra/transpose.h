@@ -122,11 +122,12 @@ template<typename T, typename Func> void sthelper2(const T * DUCC0_RESTRICT in,
     return;
     }
   // OK, we have to do a real transpose
-  // select blockig sizes depending on critical strides
+  // select blocking sizes depending on critical strides
   bool crit0 = critical(sizeof(T)*sti0) || critical(sizeof(T)*sto0);
   bool crit1 = critical(sizeof(T)*sti1) || critical(sizeof(T)*sto1);
-  size_t bs0 = crit0 ? 8 : 8;
-  size_t bs1 = crit1 ? 8 : 8;
+  constexpr size_t bsnorm=64, bscrit=8;
+  size_t bs0 = crit0 ? bscrit : bsnorm;
+  size_t bs1 = crit1 ? bscrit : bsnorm;
   // make sure that the smallest absolute stride goes in the innermost loop
   if (min(abs(sti0),abs(sto0))<min(abs(sti1),abs(sto1)))
     {
@@ -142,8 +143,35 @@ template<typename T, typename Func> void sthelper2(const T * DUCC0_RESTRICT in,
       {
       size_t ii1e = min(s1, ii1+bs1);
       for (size_t i0=ii0; i0<ii0e; ++i0)
-        for (size_t i1=ii1; i1<ii1e; ++i1)
-          func(in[i0*sti0+i1*sti1], out[i0*sto0+i1*sto1]);
+        {
+        if (ii1e==ii1+bsnorm)
+          {
+          if (sto1==1)
+            for (size_t i1=ii1; i1<ii1+bsnorm; ++i1)
+              func(in[i0*sti0+i1*sti1], out[i0*sto0+i1]);
+          else if (sti1==1)
+            for (size_t i1=ii1; i1<ii1+bsnorm; ++i1)
+              func(in[i0*sti0+i1], out[i0*sto0+i1*sto1]);
+          else
+            for (size_t i1=ii1; i1<ii1+bsnorm; ++i1)
+              func(in[i0*sti0+i1*sti1], out[i0*sto0+i1*sto1]);
+          }
+        else if (ii1e==ii1+bscrit)
+          {
+          if (sto1==1)
+            for (size_t i1=ii1; i1<ii1+bscrit; ++i1)
+              func(in[i0*sti0+i1*sti1], out[i0*sto0+i1]);
+          else if (sti1==1)
+            for (size_t i1=ii1; i1<ii1+bscrit; ++i1)
+              func(in[i0*sti0+i1], out[i0*sto0+i1*sto1]);
+          else
+            for (size_t i1=ii1; i1<ii1+bscrit; ++i1)
+              func(in[i0*sti0+i1*sti1], out[i0*sto0+i1*sto1]);
+          }
+        else
+          for (size_t i1=ii1; i1<ii1e; ++i1)
+            func(in[i0*sti0+i1*sti1], out[i0*sto0+i1*sto1]);
+        }
       }
     }
   }
