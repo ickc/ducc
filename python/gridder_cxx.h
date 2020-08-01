@@ -478,7 +478,7 @@ template<typename T> class GridderConfig
         c2c(inout, inout, {0,1}, FORWARD, T(1), nthreads);
       }
 
-    void getpix(double u_in, double v_in, double &u, double &v, int &iu0, int &iv0) const
+    void DUCC0_NOINLINE getpix(double u_in, double v_in, double &u, double &v, int &iu0, int &iv0) const
       {
       u=fmod1(u_in*psx)*nu;
       iu0 = min(int(u+ushift)-int(nu), maxiu0);
@@ -526,7 +526,9 @@ template<typename T, typename T2=complex<T>> class Helper
   {
   private:
     const GridderConfig<T> &gconf;
+    const GriddingKernel<T> &krn;
     int nu, nv, nsafe, supp;
+    double xsupp;
     const T2 *grid_r;
     T2 *grid_w;
     int su, sv;
@@ -539,7 +541,7 @@ template<typename T, typename T2=complex<T>> class Helper
     double w0, xdw;
     vector<std::mutex> &locks;
 
-    void dump() const
+    void DUCC0_NOINLINE dump() const
       {
       if (bu0<-nsafe) return; // nothing written into buffer yet
 
@@ -560,7 +562,7 @@ template<typename T, typename T2=complex<T>> class Helper
         }
       }
 
-    void load()
+    void DUCC0_NOINLINE load()
       {
       int idxu = (bu0+nu)%nu;
       int idxv0 = (bv0+nv)%nv;
@@ -589,8 +591,8 @@ template<typename T, typename T2=complex<T>> class Helper
 
     Helper(const GridderConfig<T> &gconf_, const T2 *grid_r_, T2 *grid_w_,
       vector<std::mutex> &locks_, double w0_=-1, double dw_=-1)
-      : gconf(gconf_), nu(gconf.Nu()), nv(gconf.Nv()), nsafe(gconf.Nsafe()),
-        supp(gconf.Supp()), grid_r(grid_r_),
+      : gconf(gconf_), krn(*gconf.krn), nu(gconf.Nu()), nv(gconf.Nv()), nsafe(gconf.Nsafe()),
+        supp(gconf.Supp()), xsupp(2./supp), grid_r(grid_r_),
         grid_w(grid_w_), su(2*nsafe+(1<<logsquare)), sv(2*nsafe+(1<<logsquare)),
         bu0(-1000000), bv0(-1000000),
         rbuf(su*sv*(grid_r!=nullptr),T(0)),
@@ -607,12 +609,12 @@ template<typename T, typename T2=complex<T>> class Helper
 
     int lineJump() const { return sv; }
     T Wfac() const { return wfac; }
-    void prep(const UVW &in)
+    [[gnu::noinline]] void prep(const UVW &in)
       {
-      const auto &krn(*(gconf.krn));
+//      const auto &krn(*(gconf.krn));
       double u, v;
       gconf.getpix(in.u, in.v, u, v, iu0, iv0);
-      double xsupp=2./supp;
+//      double xsupp=2./supp;
       double x0 = xsupp*(iu0-u);
       double y0 = xsupp*(iv0-v);
       krn.eval(T(x0), &buf.simd[0]);
@@ -626,8 +628,11 @@ template<typename T, typename T2=complex<T>> class Helper
         bv0=((((iv0+nsafe)>>logsquare)<<logsquare))-nsafe;
         if (grid_r) load();
         }
-      p0r = grid_r ? rbuf.data() + sv*(iu0-bu0) + iv0-bv0 : nullptr;
-      p0w = grid_w ? wbuf.data() + sv*(iu0-bu0) + iv0-bv0 : nullptr;
+//      p0r = grid_r ? rbuf.data() + sv*(iu0-bu0) + iv0-bv0 : nullptr;
+//      p0w = grid_w ? wbuf.data() + sv*(iu0-bu0) + iv0-bv0 : nullptr;
+      auto ofs = sv*(iu0-bu0) + iv0-bv0;
+      if (grid_r) p0r = rbuf.data() + ofs;
+      if (grid_w) p0w = wbuf.data() + ofs;
       }
   };
 
@@ -703,7 +708,7 @@ template<class T, class T2> MsServ<T, T2> makeMsServ
    const mav<idx_t,1> &idx, T2 &ms, const mav<T,2> &wgt)
   { return MsServ<T, T2>(baselines, idx, ms, wgt); }
 
-template<typename T, typename Serv> void x2grid_c
+template<typename T, typename Serv> [[gnu::hot]] void x2grid_c
   (const GridderConfig<T> &gconf, Serv &srv, mav<complex<T>,2> &grid,
   double w0=-1, double dw=-1)
   {
@@ -715,7 +720,7 @@ template<typename T, typename Serv> void x2grid_c
   vector<std::mutex> locks(gconf.Nu());
 
   size_t np = srv.Nvis();
-  execGuided(np, nthreads, 100, 0.2, [&](Scheduler &sched)
+  execGuided(np, nthreads, 100, 0.2, [&][[gnu::hot]] (Scheduler &sched)
     {
     Helper<T> hlp(gconf, nullptr, grid.vdata(), locks, w0, dw);
     int jump = hlp.lineJump();
@@ -750,7 +755,7 @@ template<typename T, typename Serv> void x2grid_c
     });
   }
 
-template<typename T, typename Serv> void grid2x_c
+template<typename T, typename Serv> [[gnu::hot]] void grid2x_c
   (const GridderConfig<T> &gconf, const mav<complex<T>,2> &grid,
   Serv &srv, double w0=-1, double dw=-1)
   {
@@ -763,7 +768,7 @@ template<typename T, typename Serv> void grid2x_c
 
   // Loop over sampling points
   size_t np = srv.Nvis();
-  execGuided(np, nthreads, 1000, 0.5, [&](Scheduler &sched)
+  execGuided(np, nthreads, 1000, 0.5, [&][[gnu::hot]] (Scheduler &sched)
     {
     Helper<T> hlp(gconf, grid.data(), nullptr, locks, w0, dw);
     int jump = hlp.lineJump();

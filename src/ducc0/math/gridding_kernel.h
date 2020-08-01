@@ -166,7 +166,7 @@ template<typename T> class HornerKernel: public GriddingKernel<T>
 
     KernelCorrection corr;
 
-    template<size_t NV, size_t DEG> void eval_intern(T x, native_simd<T> *res) const
+    template<size_t NV, size_t DEG> [[gnu::hot]] void eval_intern(T x, native_simd<T> *res) const
       {
       x = (x+1)*W-1;
       for (size_t i=0; i<NV; ++i)
@@ -178,7 +178,8 @@ template<typename T> class HornerKernel: public GriddingKernel<T>
         }
       }
 
-    template<size_t DEG> T eval_single_intern(T x) const
+#if 1
+    template<size_t DEG> [[gnu::hot]] T eval_single_intern(T x) const
       {
       auto nth = min(W-1, size_t(max(T(0), (x+1)*W*T(0.5))));
       x = (x+1)*W-2*nth-1;
@@ -189,6 +190,19 @@ template<typename T> class HornerKernel: public GriddingKernel<T>
         tval = tval*x + coeff[j*nvec+i][imod];
       return tval;
       }
+#else
+    template<size_t DEG> [[gnu::hot]] T eval_single_intern(T x) const
+      {
+      auto nth = min(W-1, size_t(max(T(0), (x+1)*W*T(0.5))));
+      x = (x+1)*W-2*nth-1;
+      auto i = nth/vlen;
+      auto imod = nth%vlen;
+      auto tval = coeff[i];
+      for (size_t j=1; j<=DEG; ++j)
+        tval = tval*x + coeff[j*nvec+i];
+      return tval[imod];
+      }
+#endif
 
     void eval_intern_general(T x, native_simd<T> *res) const
       {
