@@ -559,7 +559,68 @@ template<typename T, typename T0> DUCC0_NOINLINE aligned_array<T> alloc_tmp
   auto tmpsize = axsize*((othersize>=vlen) ? vlen : 1);
   return aligned_array<T>(tmpsize);
   }
+#define NEWSTUFF
+#ifdef NEWSTUFF
+template<typename T> void interleave(const Cmplx<native_simd<T>> &in, Cmplx<T> * DUCC0_RESTRICT out)
+  {
+  constexpr auto vlen = native_simd<T>::size();
+  if constexpr (vlen==1)
+    {
+    out->r = in.r[0];
+    out->i = in.i[0];
+    return;
+    }
+  native_simd<T> v0, v1; 
+  for (size_t i=0; i<vlen/2; ++i)
+    {
+    v0[2*i] = in.r[i];
+    v0[2*i+1] = in.i[i];
+    v1[2*i] = in.r[i+vlen/2];
+    v1[2*i+1] = in.i[i+vlen/2];
+    }
+  v0.storeu(&out[0].r);
+  v1.storeu(&out[0].r+vlen);
+  }
 
+template<typename T> void deinterleave(const Cmplx<T> * DUCC0_RESTRICT in, Cmplx<native_simd<T>> &out)
+  {
+  constexpr auto vlen = native_simd<T>::size();
+  if constexpr (vlen==1)
+    {
+    out.Set(in->r, in->i);
+    return;
+    }
+  auto v0=native_simd<T>::loadu(&in[0].r), v1=native_simd<T>::loadu(&in[0].r+vlen); 
+  for (size_t i=0; i<vlen/2; ++i)
+    {
+    out.r.Set(i, v0[2*i]);
+    out.i.Set(i, v0[2*i+1]);
+    out.r.Set(i+vlen/2, v1[2*i]);
+    out.i.Set(i+vlen/2, v1[2*i+1]);
+    }
+  }
+
+template<typename T> void transpose0(const T * DUCC0_RESTRICT in_, ptrdiff_t istr, native_simd<T> * DUCC0_RESTRICT out)
+  {
+  constexpr auto vlen = native_simd<T>::size();
+  std::array<native_simd<T>, vlen> in;
+  for (size_t i=0; i<vlen; ++i)
+    in[i] = native_simd<T>::loadu(in_+i*istr);
+  for (size_t i=0; i<vlen; ++i)
+    for (size_t j=0; j<vlen; ++j)
+      out[i].Set(j, in[j][i]);
+  }
+template<typename T> void transpose1(const native_simd<T> * DUCC0_RESTRICT in, T * DUCC0_RESTRICT out_, ptrdiff_t ostr)
+  {
+  constexpr auto vlen = native_simd<T>::size();
+  std::array<native_simd<T>, vlen> out;
+  for (size_t i=0; i<vlen; ++i)
+    for (size_t j=0; j<vlen; ++j)
+      out[i].Set(j, in[j][i]);
+  for (size_t i=0; i<vlen; ++i)
+    out[i].storeu(out_+i*ostr);
+  }
+#endif
 template <typename T, size_t vlen> DUCC0_NOINLINE void copy_input(const multi_iter<vlen> &it,
   const fmav<Cmplx<T>> &src, Cmplx<native_simd<T>> *DUCC0_RESTRICT dst)
   {
@@ -569,7 +630,14 @@ template <typename T, size_t vlen> DUCC0_NOINLINE void copy_input(const multi_it
     auto jstr = it.unistride_i();
     auto istr = it.stride_in();
     if (istr==1)
-      for (size_t i=0; i<it.length_in(); ++i)
+      {
+      size_t i=0;
+#ifdef NEWSTUFF
+       if constexpr (vlen>1)
+         for (; i+vlen/2<=it.length_in(); i+=vlen/2)
+           transpose0(&ptr[0].r+2*i, 2*jstr, &dst[0].r+2*i);
+#endif
+      for (; i<it.length_in(); ++i)
         {
         Cmplx<native_simd<T>> stmp;
         for (size_t j=0; j<vlen; ++j)
@@ -580,9 +648,13 @@ template <typename T, size_t vlen> DUCC0_NOINLINE void copy_input(const multi_it
           }
         dst[i] = stmp;
         }
+      }
     else if (jstr==1)
       for (size_t i=0; i<it.length_in(); ++i)
         {
+#ifdef NEWSTUFF
+        deinterleave(ptr+ptrdiff_t(i)*istr, dst[i]);
+#else
         Cmplx<native_simd<T>> stmp;
         for (size_t j=0; j<vlen; ++j)
           {
@@ -591,6 +663,7 @@ template <typename T, size_t vlen> DUCC0_NOINLINE void copy_input(const multi_it
           stmp.i[j] = tmp.i;
           }
         dst[i] = stmp;
+#endif
         }
     else
       for (size_t i=0; i<it.length_in(); ++i)
@@ -628,13 +701,24 @@ template <typename T, size_t vlen> DUCC0_NOINLINE void copy_input(const multi_it
     auto jstr = it.unistride_i();
     auto istr = it.stride_in();
     if (istr==1)
-      for (size_t i=0; i<it.length_in(); ++i)
+      {
+      size_t i=0;
+#ifdef NEWSTUFF
+      for (; i+vlen<=it.length_in(); i+=vlen)
+        transpose0(ptr+i, jstr, dst+i);
+#endif
+      for (; i<it.length_in(); ++i)
         for (size_t j=0; j<vlen; ++j)
           dst[i][j] = ptr[ptrdiff_t(j)*jstr + ptrdiff_t(i)];
+      }
     else if (jstr==1)
       for (size_t i=0; i<it.length_in(); ++i)
+#ifdef NEWSTUFF
+        dst[i] = native_simd<T>::loadu(ptr+ptrdiff_t(i)*istr);
+#else
         for (size_t j=0; j<vlen; ++j)
           dst[i][j] = ptr[ptrdiff_t(j) + ptrdiff_t(i)*istr];
+#endif
     else
       for (size_t i=0; i<it.length_in(); ++i)
         for (size_t j=0; j<vlen; ++j)
@@ -663,13 +747,25 @@ template<typename T, size_t vlen> DUCC0_NOINLINE void copy_output(const multi_it
     auto jstr = it.unistride_o();
     auto istr = it.stride_out();
     if (istr==1)
-      for (size_t i=0; i<it.length_out(); ++i)
+      {
+      size_t i=0;
+#ifdef NEWSTUFF
+      if constexpr (vlen>1)
+        for (; i+vlen/2<=it.length_out(); i+=vlen/2)
+          transpose1(&src[0].r+2*i, &ptr[0].r+2*i, 2*jstr);
+#endif
+      for (; i<it.length_out(); ++i)
         for (size_t j=0; j<vlen; ++j)
           ptr[ptrdiff_t(j)*jstr + ptrdiff_t(i)].Set(src[i].r[j],src[i].i[j]);
+      }
     else if (jstr==1)
       for (size_t i=0; i<it.length_out(); ++i)
+#ifdef NEWSTUFF
+        interleave(src[i], ptr+ptrdiff_t(i)*istr);
+#else
         for (size_t j=0; j<vlen; ++j)
           ptr[ptrdiff_t(j) + ptrdiff_t(i)*istr].Set(src[i].r[j],src[i].i[j]);
+#endif
     else
       for (size_t i=0; i<it.length_out(); ++i)
         for (size_t j=0; j<vlen; ++j)
@@ -693,13 +789,24 @@ template<typename T, size_t vlen> DUCC0_NOINLINE void copy_output(const multi_it
     auto jstr = it.unistride_o();
     auto istr = it.stride_out();
     if (istr==1)
-      for (size_t i=0; i<it.length_out(); ++i)
+      {
+      size_t i=0;
+#ifdef NEWSTUFF
+      for (; i+vlen<=it.length_out(); i+=vlen)
+        transpose1(src+i, ptr+i, jstr);
+#endif
+      for (; i<it.length_out(); ++i)
         for (size_t j=0; j<vlen; ++j)
           ptr[ptrdiff_t(j)*jstr + ptrdiff_t(i)] = src[i][j];
+      }
     else if (jstr==1)
       for (size_t i=0; i<it.length_out(); ++i)
+#ifdef NEWSTUFF
+        src[i].storeu(ptr+ptrdiff_t(i)*istr);
+#else
         for (size_t j=0; j<vlen; ++j)
           ptr[ptrdiff_t(j) + ptrdiff_t(i)*istr] = src[i][j];
+#endif
     else
       for (size_t i=0; i<it.length_out(); ++i)
         for (size_t j=0; j<vlen; ++j)
