@@ -620,6 +620,84 @@ template<typename T> void transpose1(const native_simd<T> * DUCC0_RESTRICT in, T
   for (size_t i=0; i<vlen; ++i)
     out[i].storeu(out_+i*ostr);
   }
+
+#if (defined(__AVX__) && (!defined(__AVX512F__)))
+void transpose0(const float * DUCC0_RESTRICT mat, ptrdiff_t istr, native_simd<float> * DUCC0_RESTRICT out)
+  {
+  __m256 r0 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(&mat[0*istr+0])), _mm_loadu_ps(&mat[4*istr+0]), 1);
+  __m256 r1 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(&mat[1*istr+0])), _mm_loadu_ps(&mat[5*istr+0]), 1);
+  __m256 r2 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(&mat[2*istr+0])), _mm_loadu_ps(&mat[6*istr+0]), 1);
+  __m256 r3 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(&mat[3*istr+0])), _mm_loadu_ps(&mat[7*istr+0]), 1);
+  __m256 r4 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(&mat[0*istr+4])), _mm_loadu_ps(&mat[4*istr+4]), 1);
+  __m256 r5 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(&mat[1*istr+4])), _mm_loadu_ps(&mat[5*istr+4]), 1);
+  __m256 r6 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(&mat[2*istr+4])), _mm_loadu_ps(&mat[6*istr+4]), 1);
+  __m256 r7 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_loadu_ps(&mat[3*istr+4])), _mm_loadu_ps(&mat[7*istr+4]), 1);
+
+  __m256 t0 = _mm256_unpacklo_ps(r0,r1);
+  __m256 t1 = _mm256_unpackhi_ps(r0,r1);
+  __m256 t2 = _mm256_unpacklo_ps(r2,r3);
+  __m256 t3 = _mm256_unpackhi_ps(r2,r3);
+  __m256 t4 = _mm256_unpacklo_ps(r4,r5);
+  __m256 t5 = _mm256_unpackhi_ps(r4,r5);
+  __m256 t6 = _mm256_unpacklo_ps(r6,r7);
+  __m256 t7 = _mm256_unpackhi_ps(r6,r7);
+
+  __m256 v = _mm256_shuffle_ps(t0,t2, 0x4E);
+  out[0] = _mm256_blend_ps(t0, v, 0xCC);
+  out[1] = _mm256_blend_ps(t2, v, 0x33);
+
+  v = _mm256_shuffle_ps(t1,t3, 0x4E);
+  out[2] = _mm256_blend_ps(t1, v, 0xCC);
+  out[3] = _mm256_blend_ps(t3, v, 0x33);
+
+  v = _mm256_shuffle_ps(t4,t6, 0x4E);
+  out[4] = _mm256_blend_ps(t4, v, 0xCC);
+  out[5] = _mm256_blend_ps(t6, v, 0x33);
+
+  v = _mm256_shuffle_ps(t5,t7, 0x4E);
+  out[6] = _mm256_blend_ps(t5, v, 0xCC);
+  out[7] = _mm256_blend_ps(t7, v, 0x33);
+}
+void transpose1(const native_simd<float> * DUCC0_RESTRICT in, float * DUCC0_RESTRICT out, ptrdiff_t ostr)
+  {
+  const float *DUCC0_RESTRICT mat = reinterpret_cast<const float *>(in);
+
+  __m256 r0 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_load_ps(&mat[0*8+0])), _mm_load_ps(&mat[4*8+0]), 1);
+  __m256 r1 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_load_ps(&mat[1*8+0])), _mm_load_ps(&mat[5*8+0]), 1);
+  __m256 r2 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_load_ps(&mat[2*8+0])), _mm_load_ps(&mat[6*8+0]), 1);
+  __m256 r3 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_load_ps(&mat[3*8+0])), _mm_load_ps(&mat[7*8+0]), 1);
+  __m256 r4 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_load_ps(&mat[0*8+4])), _mm_load_ps(&mat[4*8+4]), 1);
+  __m256 r5 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_load_ps(&mat[1*8+4])), _mm_load_ps(&mat[5*8+4]), 1);
+  __m256 r6 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_load_ps(&mat[2*8+4])), _mm_load_ps(&mat[6*8+4]), 1);
+  __m256 r7 = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_load_ps(&mat[3*8+4])), _mm_load_ps(&mat[7*8+4]), 1);
+
+  __m256 t0 = _mm256_unpacklo_ps(r0,r1);
+  __m256 t1 = _mm256_unpackhi_ps(r0,r1);
+  __m256 t2 = _mm256_unpacklo_ps(r2,r3);
+  __m256 t3 = _mm256_unpackhi_ps(r2,r3);
+  __m256 t4 = _mm256_unpacklo_ps(r4,r5);
+  __m256 t5 = _mm256_unpackhi_ps(r4,r5);
+  __m256 t6 = _mm256_unpacklo_ps(r6,r7);
+  __m256 t7 = _mm256_unpackhi_ps(r6,r7);
+
+  __m256 v = _mm256_shuffle_ps(t0,t2, 0x4E);
+  _mm256_storeu_ps(out, _mm256_blend_ps(t0, v, 0xCC));
+  _mm256_storeu_ps(out+ostr, _mm256_blend_ps(t2, v, 0x33));
+
+  v = _mm256_shuffle_ps(t1,t3, 0x4E);
+  _mm256_storeu_ps(out+2*ostr, _mm256_blend_ps(t1, v, 0xCC));
+  _mm256_storeu_ps(out+3*ostr, _mm256_blend_ps(t3, v, 0x33));
+
+  v = _mm256_shuffle_ps(t4,t6, 0x4E);
+  _mm256_storeu_ps(out+4*ostr, _mm256_blend_ps(t4, v, 0xCC));
+  _mm256_storeu_ps(out+5*ostr, _mm256_blend_ps(t6, v, 0x33));
+
+  v = _mm256_shuffle_ps(t5,t7, 0x4E);
+  _mm256_storeu_ps(out+6*ostr, _mm256_blend_ps(t5, v, 0xCC));
+  _mm256_storeu_ps(out+7*ostr, _mm256_blend_ps(t7, v, 0x33));
+}
+#endif
+
 #endif
 template <typename T, size_t vlen> DUCC0_NOINLINE void copy_input(const multi_iter<vlen> &it,
   const fmav<Cmplx<T>> &src, Cmplx<native_simd<T>> *DUCC0_RESTRICT dst)
