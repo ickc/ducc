@@ -10,6 +10,10 @@ pkgname = 'ducc0'
 version = '0.6.0'
 
 
+mpi_compile_args = os.popen("mpiCC --showme:compile").read().strip().split(' ')
+mpi_compile_args.append("-DDUCC0_USE_MPI")
+mpi_link_args    = os.popen("mpiCC --showme:link").read().strip().split(' ')
+
 def _get_files_by_suffix(directory, suffix):
     path = directory
     iterable_sources = (iglob(os.path.join(root, '*.'+suffix))
@@ -21,7 +25,7 @@ include_dirs = ['.', './src/',
                 pybind11.get_include(True),
                 pybind11.get_include(False)]
 
-extra_compile_args = ['-std=c++17', '-march=native', '-ffast-math', '-O3']
+extra_compile_args = ['-std=c++17', '-march=native', '-ffast-math', '-O0']
 
 python_module_link_args = []
 
@@ -52,8 +56,11 @@ else:
     python_module_link_args += ['-march=native',
                                 '-Wl,-rpath,$ORIGIN',
                                 '-s']
-
 # if you want debugging info, remove the "-s" from python_module_link_args
+
+extra_compile_args+=mpi_compile_args
+python_module_link_args+=mpi_link_args
+
 depfiles = (_get_files_by_suffix('.', 'h') +
             _get_files_by_suffix('.', 'cc') +
             ['setup.py'])
