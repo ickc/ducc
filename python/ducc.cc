@@ -22,7 +22,9 @@
 #include "python/healpix.cc"
 #include "python/misc.cc"
 #include "python/pointingprovider.cc"
+#ifdef DUCC0_USE_MPI
 #include "python/mpi.cc"
+#endif
 
 using namespace ducc0;
 
@@ -37,5 +39,7 @@ PYBIND11_MODULE(PKGNAME, m)
   add_healpix(m);
   add_misc(m);
   add_pointingprovider(m);
+#ifdef DUCC0_USE_MPI
   add_mpi(m);
+#endif
   }
