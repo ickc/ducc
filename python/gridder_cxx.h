@@ -40,6 +40,8 @@
 #include "ducc0/infra/timers.h"
 #include "ducc0/math/gridding_kernel.h"
 
+#define PARANOIA_MODE
+
 namespace ducc0 {
 
 namespace detail_gridder {
@@ -171,6 +173,7 @@ template<typename T> void hartley2_2D(mav<T,2> &arr, size_t vlim,
   {
   size_t nu=arr.shape(0), nv=arr.shape(1);
   fmav<T> farr(arr);
+#ifndef PARANOIA_MODE
   if (2*vlim<nv)
     {
     if (!first_fast)
@@ -183,6 +186,7 @@ template<typename T> void hartley2_2D(mav<T,2> &arr, size_t vlim,
       r2r_separable_hartley(farr, farr, {1}, T(1), nthreads);
     }
   else
+#endif
     r2r_separable_hartley(farr, farr, {0,1}, T(1), nthreads);
 
   execParallel((nu+1)/2-1, nthreads, [&](size_t lo, size_t hi)
@@ -440,6 +444,7 @@ template<typename T> class Params
       timers.push("FFT");
       checkShape(grid.shape(), {nu,nv});
       fmav<complex<T>> inout(grid);
+#ifndef PARANOIA_MODE
       if (2*vlim<nv)
         {
         if (!uv_side_fast)
@@ -452,6 +457,7 @@ template<typename T> class Params
           c2c(inout, inout, {1}, BACKWARD, T(1), nthreads);
         }
       else
+#endif
         c2c(inout, inout, {0,1}, BACKWARD, T(1), nthreads);
       timers.poppush("wscreen+grid correction");
       grid2dirty_post2(grid, dirty, w);
@@ -465,10 +471,14 @@ template<typename T> class Params
       checkShape(grid.shape(), {nu, nv});
       auto cfu = krn->corfunc(nxdirty/2+1, 1./nu, nthreads);
       auto cfv = krn->corfunc(nydirty/2+1, 1./nv, nthreads);
+#ifndef PARANOIA_MODE
       // only zero the parts of the grid that are not filled afterwards anyway
       { auto a0 = grid.template subarray<2>({0,nydirty/2}, {nxdirty/2, nv-nydirty+1}); quickzero(a0, nthreads); }
       { auto a0 = grid.template subarray<2>({nxdirty/2,0}, {nu-nxdirty+1, nv}); quickzero(a0, nthreads); }
       { auto a0 = grid.template subarray<2>({nu-nxdirty/2+1, nydirty/2}, {nxdirty/2-1, nv-nydirty+1}); quickzero(a0, nthreads); }
+#else
+      quickzero(grid, nthreads);
+#endif
       timers.poppush("grid correction");
       execParallel(nxdirty, nthreads, [&](size_t lo, size_t hi)
         {
@@ -493,10 +503,14 @@ template<typename T> class Params
       timers.push("zeroing grid");
       checkShape(dirty.shape(), {nxdirty, nydirty});
       checkShape(grid.shape(), {nu, nv});
+#ifndef PARANOIA_MODE
       // only zero the parts of the grid that are not filled afterwards anyway
       { auto a0 = grid.template subarray<2>({0,nydirty/2}, {nxdirty/2, nv-nydirty+1}); quickzero(a0, nthreads); }
       { auto a0 = grid.template subarray<2>({nxdirty/2,0}, {nu-nxdirty+1, nv}); quickzero(a0, nthreads); }
       { auto a0 = grid.template subarray<2>({nu-nxdirty/2+1, nydirty/2}, {nxdirty/2-1, nv-nydirty+1}); quickzero(a0, nthreads); }
+#else
+      quickzero(grid, nthreads);
+#endif
       timers.poppush("wscreen+grid correction");
       double x0 = -0.5*nxdirty*pixsize_x,
              y0 = -0.5*nydirty*pixsize_y;
@@ -560,6 +574,7 @@ template<typename T> class Params
       dirty2grid_pre2(dirty, grid, w);
       timers.push("FFT");
       fmav<complex<T>> inout(grid);
+#ifndef PARANOIA_MODE
       if (2*vlim<nv)
         {
         if (uv_side_fast)
@@ -572,6 +587,7 @@ template<typename T> class Params
           c2c(inout, inout, {1}, FORWARD, T(1), nthreads);
         }
       else
+#endif
         c2c(inout, inout, {0,1}, FORWARD, T(1), nthreads);
       timers.pop();
       }
