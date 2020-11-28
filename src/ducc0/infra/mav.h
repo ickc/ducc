@@ -72,6 +72,7 @@ template<typename T> class membuf
 
   public:
     // allocate own memory
+    membuf() : d(nullptr), rw(false) {}
     membuf(size_t sz)
       : ptr(make_shared<vector<T>>(sz)), d(ptr->data()), rw(true) {}
     void assign(membuf &other)
@@ -135,6 +136,7 @@ class fmav_info
       { return str[dim]*ptrdiff_t(n); }
 
   public:
+    fmav_info() : shp(1,0), str(1,0), sz(0) {}
     fmav_info(const shape_t &shape_, const stride_t &stride_)
       : shp(shape_), str(stride_), sz(accumulate(shp.begin(),shp.end(),size_t(1),multiplies<>()))
       {
@@ -205,6 +207,11 @@ template<size_t ndim> class mav_info
       { return str[dim]*n; }
 
   public:
+    mav_info() : sz(0)
+      {
+      for (size_t i=0; i<ndim; ++i)
+        { shp[i]=0; str[i]=0; }
+      }
     mav_info(const shape_t &shape_, const stride_t &stride_)
       : shp(shape_), str(stride_), sz(accumulate(shp.begin(),shp.end(),size_t(1),multiplies<>())) {}
     mav_info(const shape_t &shape_)
@@ -344,7 +351,7 @@ template<typename T> class fmav: public fmav_info, public membuf<T>
 
   public:
     using tbuf::vraw, tbuf::craw, tbuf::vdata, tbuf::cdata;
-
+    fmav() {}
     fmav(const T *d_, const shape_t &shp_, const stride_t &str_)
       : tinfo(shp_, str_), tbuf(d_) {}
     fmav(const T *d_, const shape_t &shp_)
@@ -558,6 +565,7 @@ template<typename T, size_t ndim> class mav: public mav_info<ndim>, public membu
     using tbuf::vraw, tbuf::craw, tbuf::vdata, tbuf::cdata;
     using tinfo::contiguous, tinfo::size, tinfo::idx, tinfo::conformable;
 
+    mav() {}
     mav(const T *d_, const shape_t &shp_, const stride_t &str_)
       : tinfo(shp_, str_), tbuf(d_) {}
     mav(T *d_, const shape_t &shp_, const stride_t &str_, bool rw_=false)
