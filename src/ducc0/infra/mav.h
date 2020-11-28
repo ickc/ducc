@@ -453,11 +453,11 @@ template<typename T> class fmav: public fmav_info, public membuf<T>
 
 template<typename T> fmav<T> subarray
   (fmav<T> &arr, const typename fmav<T>::shape_t &i0, const typename fmav<T>::shape_t &extent)  
-  { return arr.template subarray(i0, extent); }
+  { return arr.subarray(i0, extent); }
 
 template<typename T> fmav<T> subarray
   (const fmav<T> &arr, const typename fmav<T>::shape_t &i0, const typename fmav<T>::shape_t &extent)  
-  { return arr.template subarray(i0, extent); }
+  { return arr.subarray(i0, extent); }
 
 
 // template<typename Func, typename T0, typename Ts...> void fmav_pointwise_op(Func func, T0 & arg0, Ts&... args)
